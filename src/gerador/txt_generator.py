@@ -1,0 +1,439 @@
+"""
+Módulo principal de geração de arquivos TXT no formato SIPROQUIM/Rodogarcia.
+Implementa as seções EM, TN e CC conforme especificação técnica.
+"""
+
+import warnings
+from typing import Dict, List
+from .sanitizers import sanitizar_texto, sanitizar_numerico, sanitizar_alfanumerico
+from .validators import validar_cnpj, validar_cpf, is_cpf_convertido, parece_pessoa_fisica_pelo_nome
+from .layout_constants import (
+    # Constantes EM
+    EM_TAMANHO_TOTAL, EM_TAM_TIPO, EM_TAM_CNPJ, EM_TAM_MES, EM_TAM_ANO,
+    EM_TIPO, mes_numero_para_alfanumerico, gerar_flags_em,
+    # Constantes TN
+    TN_TAMANHO_TOTAL, TN_TAM_TIPO, TN_TAM_CNPJ, TN_TAM_NOME, TN_TAM_NF_NUMERO, TN_TAM_NF_DATA, TN_TAM_LOCAL,
+    TN_TIPO, TN_LOCAL_PROPRIO,
+    # Constantes CC
+    CC_TAMANHO_TOTAL, CC_TAM_TIPO, CC_TAM_CTE_NUMERO, CC_TAM_DATA, CC_TAM_RECEBEDOR, CC_TAM_MODAL,
+    CC_TIPO, CC_MODAL_RODOVIARIO,
+    # Constantes de validação
+    MES_MINIMO, MES_MAXIMO, ANO_MINIMO, ANO_MAXIMO,
+    # Constantes compartilhadas
+    CNPJ_TAMANHO, RECEBEDOR_NAO_INFORMADO
+)
+
+
+class GeradorTXT:
+    """Classe responsável pela geração do arquivo TXT no formato SIPROQUIM."""
+    
+    def __init__(self, cnpj_rodogarcia: str):
+        """
+        Inicializa o gerador com o CNPJ da Rodogarcia.
+        
+        Args:
+            cnpj_rodogarcia: CNPJ da Rodogarcia (será usado na seção EM)
+        """
+        self.cnpj_rodogarcia = sanitizar_numerico(cnpj_rodogarcia, EM_TAM_CNPJ)
+    
+    def gerar_linha_EM(self, mes: int, ano: int) -> str:
+        """
+        Gera a linha EM (Cabeçalho) do arquivo conforme Manual SIPROQUIM 3.1.1.
+        
+        Args:
+            mes: Mês de referência (1-12)
+            ano: Ano de referência (ex: 2025)
+        
+        Returns:
+            Linha EM formatada com exatamente {EM_TAMANHO_TOTAL} caracteres
+        """
+        # Validação de entrada usando constantes
+        if not (MES_MINIMO <= mes <= MES_MAXIMO):
+            raise ValueError(f"Mês deve estar entre {MES_MINIMO} e {MES_MAXIMO}, recebido: {mes}")
+        if not (ANO_MINIMO <= ano <= ANO_MAXIMO):
+            raise ValueError(f"Ano deve estar entre {ANO_MINIMO} e {ANO_MAXIMO}, recebido: {ano}")
+        
+        # Validação do CNPJ
+        if len(self.cnpj_rodogarcia) != EM_TAM_CNPJ:
+            raise ValueError(f"CNPJ deve ter {EM_TAM_CNPJ} dígitos, recebido: {len(self.cnpj_rodogarcia)}")
+        
+        # Converter mês numérico para alfanumérico (JAN, FEV, etc.)
+        mes_alfanumerico = mes_numero_para_alfanumerico(mes)
+        
+        # Montar linha com posições corretas usando constantes
+        linha = EM_TIPO
+        linha += self.cnpj_rodogarcia
+        linha += sanitizar_texto(mes_alfanumerico, EM_TAM_MES)
+        linha += sanitizar_numerico(str(ano), EM_TAM_ANO)
+        
+        # Flags na posição correta usando função helper
+        flags = gerar_flags_em(transporte=True)
+        linha += flags
+        
+        # Validação crítica: linha deve ter exatamente EM_TAMANHO_TOTAL caracteres
+        if len(linha) != EM_TAMANHO_TOTAL:
+            raise ValueError(
+                f"Linha EM deve ter exatamente {EM_TAMANHO_TOTAL} caracteres, mas tem {len(linha)}. "
+                f"CNPJ: {self.cnpj_rodogarcia}, Mês: {mes_alfanumerico}, Ano: {ano}"
+            )
+        
+        return linha
+    
+    def gerar_linha_TN(self, dados_nf: Dict) -> str:
+        """
+        Gera a linha TN (Transporte Nacional) conforme layout 3.1.9.
+        
+        Args:
+            dados_nf: Dicionário com os dados da Nota Fiscal extraídos do PDF
+        
+        Returns:
+            Linha TN formatada com exatamente TN_TAMANHO_TOTAL caracteres
+        
+        Raises:
+            ValueError: Se algum CNPJ for inválido segundo algoritmo oficial
+        """
+        # Preparação e sanitização dos dados usando constantes
+        cnpj_contratante = sanitizar_numerico(dados_nf.get('contratante_cnpj'), TN_TAM_CNPJ)
+        nome_contratante = sanitizar_texto(dados_nf.get('contratante_nome'), TN_TAM_NOME)
+        nf_numero = sanitizar_alfanumerico(dados_nf.get('nf_numero'), TN_TAM_NF_NUMERO)
+        nf_data = sanitizar_texto(dados_nf.get('nf_data'), TN_TAM_NF_DATA)
+        cnpj_origem = sanitizar_numerico(dados_nf.get('emitente_cnpj'), TN_TAM_CNPJ)
+        nome_origem = sanitizar_texto(dados_nf.get('emitente_nome'), TN_TAM_NOME)
+        cnpj_destino = sanitizar_numerico(dados_nf.get('destinatario_cnpj'), TN_TAM_CNPJ)
+        nome_destino = sanitizar_texto(dados_nf.get('destinatario_nome'), TN_TAM_NOME)
+        local_retirada = dados_nf.get('local_retirada', TN_LOCAL_PROPRIO)
+        local_entrega = dados_nf.get('local_entrega', TN_LOCAL_PROPRIO)
+        
+        # Validação de CNPJs usando algoritmo oficial
+        # Isso ajuda a identificar CNPJs inválidos antes de gerar o arquivo
+        
+        # Validação especial para CNPJ Contratante: pode ser pessoa física (CPF convertido)
+        if not validar_cnpj(cnpj_contratante):
+            # Verifica se é um CPF convertido (pessoa física)
+            if is_cpf_convertido(cnpj_contratante):
+                # Para pessoa física, aceita o CPF convertido sem validação rigorosa
+                # O SIPROQUIM aceita CPFs convertidos para contratantes pessoa física
+                pass  # Aceita o CPF convertido
+            else:
+                # Verifica se o nome parece ser de pessoa física usando função auxiliar
+                # que verifica palavras completas (evita falsos positivos como "ME" em "ALMEIDA")
+                if parece_pessoa_fisica_pelo_nome(nome_contratante):
+                    # Aceita sem validação rigorosa para pessoa física
+                    # (pode ser um CPF mal formatado ou CNPJ genérico para pessoa física)
+                    pass
+                else:
+                    # Se não é CPF convertido e não parece ser pessoa física, gera erro
+                    raise ValueError(
+                        f"CNPJ Contratante inválido: {cnpj_contratante}. "
+                        f"Nome: {nome_contratante[:50]}. "
+                        f"Verifique se o CNPJ foi extraído corretamente do PDF."
+                    )
+        
+        # Validação para CNPJ Origem (Emitente) - mantém validação rigorosa
+        if not validar_cnpj(cnpj_origem):
+            raise ValueError(
+                f"CNPJ Origem (Emitente) inválido: {cnpj_origem}. "
+                f"Nome: {nome_origem[:50]}. "
+                f"Verifique se o CNPJ foi extraído corretamente do PDF."
+            )
+        
+        # Validação especial para CNPJ Destino: pode ser pessoa física (CPF convertido)
+        if not validar_cnpj(cnpj_destino):
+            # Verifica se é um CPF convertido (pessoa física)
+            if is_cpf_convertido(cnpj_destino):
+                # Para pessoa física, aceita o CPF convertido sem validação rigorosa
+                # O SIPROQUIM aceita CPFs convertidos para destinatários pessoa física
+                pass  # Aceita o CPF convertido
+            else:
+                # Verifica se o nome parece ser de pessoa física usando função auxiliar
+                # que verifica palavras completas (evita falsos positivos como "ME" em "ALMEIDA")
+                if parece_pessoa_fisica_pelo_nome(nome_destino):
+                    # Aceita sem validação rigorosa para pessoa física
+                    # (pode ser um CPF mal formatado ou CNPJ genérico para pessoa física)
+                    pass
+                else:
+                    # Se não é CPF convertido e não parece ser pessoa física, gera erro
+                    raise ValueError(
+                        f"CNPJ Destino (Destinatário) inválido: {cnpj_destino}. "
+                        f"Nome: {nome_destino[:50]}. "
+                        f"Verifique se o CNPJ foi extraído corretamente do PDF."
+                    )
+        
+        # NOVA VALIDAÇÃO: Avisa se contratante e destino são iguais
+        # (pode causar erro no SIPROQUIM se não estiver configurado corretamente)
+        cnpj_contratante_limpo = ''.join(filter(str.isdigit, cnpj_contratante))
+        cnpj_destino_limpo = ''.join(filter(str.isdigit, cnpj_destino))
+        if (cnpj_contratante_limpo == cnpj_destino_limpo and 
+            cnpj_contratante_limpo != "0" * CNPJ_TAMANHO and
+            len(cnpj_contratante_limpo) == CNPJ_TAMANHO):
+            # Avisa mas não bloqueia - pode ser válido em alguns casos
+            nf_num_display = str(nf_numero).strip() if nf_numero else "N/A"
+            warnings.warn(
+                f"ATENÇÃO: CNPJ Contratante ({cnpj_contratante_limpo}) igual ao CNPJ Destino. "
+                f"Isso pode causar erro no SIPROQUIM se não estiver configurado corretamente. "
+                f"NF: {nf_num_display}",
+                UserWarning
+            )
+        
+        # Montagem posicional rígida usando constantes
+        linha = TN_TIPO
+        linha += cnpj_contratante
+        linha += nome_contratante
+        linha += nf_numero
+        linha += nf_data
+        linha += cnpj_origem
+        linha += nome_origem
+        linha += cnpj_destino
+        linha += nome_destino
+        linha += local_retirada
+        linha += local_entrega
+        
+        # Validação crítica: linha deve ter exatamente TN_TAMANHO_TOTAL caracteres
+        if len(linha) != TN_TAMANHO_TOTAL:
+            raise ValueError(
+                f"Linha TN deve ter exatamente {TN_TAMANHO_TOTAL} caracteres, mas tem {len(linha)}. "
+                f"Campos: Tipo={len(TN_TIPO)}, CNPJ_Cont={len(cnpj_contratante)}, "
+                f"Nome_Cont={len(nome_contratante)}, NF={len(nf_numero)}, "
+                f"Data={len(nf_data)}, CNPJ_Orig={len(cnpj_origem)}, "
+                f"Nome_Orig={len(nome_origem)}, CNPJ_Dest={len(cnpj_destino)}, "
+                f"Nome_Dest={len(nome_destino)}"
+            )
+        
+        return linha
+    
+    def gerar_linha_CC(self, dados_cte: Dict) -> str:
+        """
+        Gera a linha CC (Conhecimento de Carga) conforme layout 3.1.9.1.
+        
+        Args:
+            dados_cte: Dicionário com os dados do CTe extraídos do PDF
+        
+        Returns:
+            Linha CC formatada com exatamente CC_TAMANHO_TOTAL caracteres
+        
+        Raises:
+            ValueError: Se o CTe número ou data estiverem inválidos
+        """
+        # NOVA VALIDAÇÃO: Verifica se o CTe tem dados válidos antes de processar
+        cte_numero_raw = dados_cte.get('cte_numero', '')
+        cte_data_raw = dados_cte.get('cte_data', '')
+        
+        # Se o CTe número está vazio ou None, pode causar erro no SIPROQUIM
+        if not cte_numero_raw or str(cte_numero_raw).strip() == '':
+            raise ValueError(
+                f"CTe número inválido ou não encontrado. "
+                f"Verifique se o CTe foi extraído corretamente do PDF. "
+                f"NF: {dados_cte.get('nf_numero', 'N/A')}"
+            )
+        
+        # Sanitização usando constantes
+        cte_numero = sanitizar_numerico(cte_numero_raw, CC_TAM_CTE_NUMERO)
+        
+        # Se o CTe número está vazio ou só zeros após sanitização, pode causar erro
+        if cte_numero == "0" * CC_TAM_CTE_NUMERO:
+            raise ValueError(
+                f"CTe número inválido (apenas zeros). "
+                f"Verifique se o CTe foi extraído corretamente do PDF. "
+                f"NF: {dados_cte.get('nf_numero', 'N/A')}"
+            )
+        
+        # Se a data do CTe está vazia, pode causar erro
+        if not cte_data_raw or str(cte_data_raw).strip() == '':
+            raise ValueError(
+                f"CTe data inválida ou não encontrada. "
+                f"Verifique se a data do CTe foi extraída corretamente do PDF. "
+                f"NF: {dados_cte.get('nf_numero', 'N/A')}"
+            )
+        
+        cte_data = sanitizar_texto(cte_data_raw, CC_TAM_DATA)
+        
+        # Se a data do CTe está vazia após sanitização, pode causar erro
+        if not cte_data or cte_data.strip() == "" or cte_data.strip() == " " * CC_TAM_DATA:
+            raise ValueError(
+                f"CTe data inválida (apenas espaços). "
+                f"Verifique se a data do CTe foi extraída corretamente do PDF. "
+                f"NF: {dados_cte.get('nf_numero', 'N/A')}"
+            )
+        
+        # Data Recebimento: se vazio, repete data CTe
+        data_recebimento = dados_cte.get('data_entrega', '')
+        if not data_recebimento:
+            data_recebimento = cte_data
+        data_recebimento = sanitizar_texto(data_recebimento, CC_TAM_DATA)
+        
+        # FALLBACK CRÍTICO: Campo "Responsável pelo Recebimento" é OBRIGATÓRIO no SIPROQUIM
+        # Se não encontrou recebedor, usa destinatário (quem recebe a carga)
+        recebedor = dados_cte.get('recebedor')
+        if not recebedor:
+            recebedor = dados_cte.get('destinatario_nome')
+        if not recebedor:
+            recebedor = dados_cte.get('contratante_nome')
+        if not recebedor:
+            recebedor = dados_cte.get('emitente_nome')
+        
+        # NOVA VALIDAÇÃO: Garante que o recebedor não seja muito curto
+        # O SIPROQUIM pode rejeitar recebedores com menos de 3 caracteres
+        if recebedor:
+            recebedor_limpo = str(recebedor).strip()
+            # Se o recebedor tem menos de 3 caracteres, tenta usar alternativas
+            if len(recebedor_limpo) < 3:
+                # Tenta usar destinatário se disponível e válido
+                if dados_cte.get('destinatario_nome'):
+                    dest_limpo = str(dados_cte.get('destinatario_nome')).strip()
+                    if len(dest_limpo) >= 3:
+                        recebedor = dados_cte.get('destinatario_nome')
+                    elif dados_cte.get('contratante_nome'):
+                        cont_limpo = str(dados_cte.get('contratante_nome')).strip()
+                        if len(cont_limpo) >= 3:
+                            recebedor = dados_cte.get('contratante_nome')
+                    elif dados_cte.get('emitente_nome'):
+                        emit_limpo = str(dados_cte.get('emitente_nome')).strip()
+                        if len(emit_limpo) >= 3:
+                            recebedor = dados_cte.get('emitente_nome')
+        
+        # Se ainda estiver vazio após todos os fallbacks, usa valor padrão
+        if not recebedor:
+            recebedor = RECEBEDOR_NAO_INFORMADO
+        else:
+            # Verifica novamente após fallbacks
+            recebedor_limpo_final = str(recebedor).strip()
+            if len(recebedor_limpo_final) < 3:
+                recebedor = RECEBEDOR_NAO_INFORMADO
+        
+        recebedor = sanitizar_texto(recebedor, CC_TAM_RECEBEDOR)
+        
+        # Montagem posicional usando constantes
+        linha = CC_TIPO
+        linha += cte_numero
+        linha += cte_data
+        linha += data_recebimento
+        linha += recebedor
+        linha += CC_MODAL_RODOVIARIO
+        
+        # Validação: linha deve ter exatamente CC_TAMANHO_TOTAL caracteres
+        if len(linha) != CC_TAMANHO_TOTAL:
+            raise ValueError(
+                f"Linha CC deve ter exatamente {CC_TAMANHO_TOTAL} caracteres, mas tem {len(linha)}. "
+                f"Campos: Tipo={len(CC_TIPO)}, CTe={len(cte_numero)}, "
+                f"Data_CTe={len(cte_data)}, Data_Rec={len(data_recebimento)}, "
+                f"Recebedor={len(recebedor)}, Modal={len(CC_MODAL_RODOVIARIO)}"
+            )
+        
+        return linha
+    
+    def gerar_arquivo(self, nfs_deduplicadas: list, mes: int, ano: int, 
+                     caminho_saida: str, callback_progresso=None) -> str:
+        """
+        Gera o arquivo TXT completo com todas as seções.
+        
+        Args:
+            nfs_deduplicadas: Lista de dicionários, cada um representando uma NF única
+                             com seus dados e CTe associado
+            mes: Mês de referência
+            ano: Ano de referência
+            caminho_saida: Caminho onde o arquivo será salvo
+            callback_progresso: Função opcional chamada durante geração.
+                               Recebe (etapa, detalhes) como parâmetros.
+                               Etapas: 'gerar', 'aviso', 'finalizar'
+        
+        Returns:
+            Caminho do arquivo gerado
+        
+        Raises:
+            ValueError: Se algum CNPJ for inválido segundo algoritmo oficial
+            Warning: Se algum CNPJ válido pode não estar cadastrado no SIPROQUIM
+        """
+        linhas = []
+        cnpjs_validos_alertas = set()  # Para coletar CNPJs que podem não estar cadastrados
+        
+        # Linha EM (cabeçalho - apenas uma por arquivo)
+        linhas.append(self.gerar_linha_EM(mes, ano))
+        
+        # Para cada NF, gerar linha TN seguida de sua linha CC
+        for nf in nfs_deduplicadas:
+            try:
+                linhas.append(self.gerar_linha_TN(nf))
+            except ValueError as e:
+                # Se for erro de CNPJ inválido, propaga o erro
+                raise ValueError(
+                    f"Erro ao gerar linha TN para NF {nf.get('nf_numero', 'N/A')}: {str(e)}"
+                ) from e
+            
+            # Coleta CNPJs para aviso (mesmo sendo válidos, podem não estar cadastrados)
+            cnpj_contratante = nf.get('contratante_cnpj', '')
+            cnpj_origem = nf.get('emitente_cnpj', '')
+            cnpj_destino = nf.get('destinatario_cnpj', '')
+            
+            if cnpj_contratante and validar_cnpj(cnpj_contratante):
+                cnpjs_validos_alertas.add(cnpj_contratante)
+            if cnpj_origem and validar_cnpj(cnpj_origem):
+                cnpjs_validos_alertas.add(cnpj_origem)
+            if cnpj_destino and validar_cnpj(cnpj_destino):
+                cnpjs_validos_alertas.add(cnpj_destino)
+            
+            # Se houver CTe associado, gerar linha CC
+            if nf.get('cte_numero'):
+                try:
+                    linhas.append(self.gerar_linha_CC(nf))
+                except ValueError as e:
+                    # NOVO: Se houver erro ao gerar CC, avisa mas não bloqueia o processamento
+                    # (pode ser que o CTe tenha dados inválidos, mas a NF ainda é válida)
+                    nf_num = nf.get('nf_numero', 'N/A')
+                    aviso_cc = (
+                        f"AVISO: Linha CC não gerada para NF {nf_num}: {str(e)}\n"
+                        f"A linha TN foi gerada com sucesso, mas a linha CC correspondente foi pulada.\n"
+                        f"Verifique se os dados do CTe foram extraídos corretamente do PDF."
+                    )
+                    warnings.warn(aviso_cc.replace('\n', ' '), UserWarning)
+                    if callback_progresso:
+                        callback_progresso('aviso', {'mensagem': aviso_cc})
+        
+        # Aviso sobre CNPJs válidos mas que podem não estar cadastrados no SIPROQUIM
+        if cnpjs_validos_alertas:
+            aviso = (
+                f"ATENÇÃO: Os CNPJs foram validados e estão corretos segundo o algoritmo oficial, "
+                f"mas podem não estar cadastrados no sistema SIPROQUIM.\n"
+                f"Se ocorrer erro 'ConstraintViolationException' ao processar o arquivo, "
+                f"verifique se todos os CNPJs estão cadastrados no sistema.\n"
+                f"Total de CNPJs distintos: {len(cnpjs_validos_alertas)}.\n"
+                f"Caso o problema persista, entre em contato com o suporte: lucasmac.dev@gmail.com"
+            )
+            warnings.warn(aviso.replace('\n', ' '), UserWarning)  # Remove quebras para warning
+            if callback_progresso:
+                # Envia mensagem com quebras de linha para melhor formatação no log
+                callback_progresso('aviso', {'mensagem': aviso})
+        
+        # Escrever arquivo
+        # CRÍTICO: Garantir que nenhuma linha contenha quebras de linha internas
+        # MAS preservar os espaços de preenchimento (ljust) que são necessários para o layout
+        import re
+        linhas_finais = []
+        for linha in linhas:
+            # CRÍTICO: Para linhas TN, CC e EM, NÃO fazer strip() pois isso remove espaços de preenchimento
+            # Apenas remove quebras de linha que possam ter vindo
+            if linha.startswith(TN_TIPO) or linha.startswith(CC_TIPO) or linha.startswith(EM_TIPO):
+                # Remove apenas quebras de linha, mas preserva espaços de preenchimento
+                linha_limpa = str(linha).replace('\n', '').replace('\r', '')
+                # Remove apenas caracteres não imprimíveis (exceto espaço)
+                linha_limpa = ''.join(c for c in linha_limpa if c.isprintable() or c == ' ')
+            else:
+                # Para outras linhas, pode fazer limpeza normal
+                linha_limpa = str(linha).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+                linha_limpa = re.sub(r'\s+', ' ', linha_limpa).strip()
+            linhas_finais.append(linha_limpa)
+        
+        # Escreve o arquivo garantindo que cada linha seja uma linha física separada
+        # mas sem quebras de linha DENTRO de cada linha
+        # Encoding UTF-8 conforme Manual Técnico SIPROQUIM (seção 2.2)
+        with open(caminho_saida, 'w', encoding='utf-8', newline='') as f:
+            for i, linha in enumerate(linhas_finais):
+                # Garantia final: remove apenas quebras de linha, preserva espaços
+                linha_final = linha.replace('\n', '').replace('\r', '')
+                # Adiciona quebra de linha em todas as linhas, incluindo a última
+                f.write(linha_final)
+                f.write('\n')  # Quebra de linha explícita para cada linha
+        
+        if callback_progresso:
+            callback_progresso('finalizar', {'caminho_gerado': caminho_saida})
+        
+        return caminho_saida
