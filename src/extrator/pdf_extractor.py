@@ -154,15 +154,83 @@ class ExtratorPDF:
             if match_data_cte:
                 registro['cte_data'] = match_data_cte.group(1)
         
-        # Extrai todos os CNPJs do bloco (estratégia robusta)
-        # Busca todos os CNPJs formatados primeiro
+        # Extrai todos os CNPJs/CPFs do bloco (estratégia robusta)
+        # Busca todos os CNPJs formatados primeiro (XX.XXX.XXX/XXXX-XX)
         cnpjs_formatados = re.findall(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', contexto)
         
-        # Se não encontrou formatados, busca sequências de CNPJ_TAMANHO dígitos
+        # Busca CPFs formatados também (XXX.XXX.XXX-XX)
+        cpfs_formatados = re.findall(r'\d{3}\.\d{3}\.\d{3}-\d{2}', contexto)
+        # Mantém CPFs como 11 dígitos - o sanitizer tratará a formatação conforme necessário
+        for cpf in cpfs_formatados:
+            cpf_limpo = self._limpar_cnpj_cpf(cpf)
+            if len(cpf_limpo) == 11:
+                cnpjs_formatados.append(cpf_limpo)
+        
+        # Se não encontrou formatados suficientes, busca sequências de dígitos
+        # Mas com cuidado para não pegar CPF + telefone
         if len(cnpjs_formatados) < 3:
-            texto_sem_pontuacao = re.sub(r'[^\d\s]', ' ', contexto)
-            cnpjs_raw = re.findall(rf'\d{{{CNPJ_TAMANHO}}}', texto_sem_pontuacao)
-            cnpjs_formatados = cnpjs_raw[:3]  # Pega até 3 CNPJs
+            # Divide por linhas para evitar pegar CPF de uma linha + telefone de outra
+            linhas = contexto.split('\n')
+            for linha in linhas:
+                # Busca CPF formatado na linha
+                match_cpf = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', linha)
+                if match_cpf:
+                    cpf_limpo = self._limpar_cnpj_cpf(match_cpf.group(1))
+                    if len(cpf_limpo) == 11:
+                        # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                        if cpf_limpo not in cnpjs_formatados:
+                            cnpjs_formatados.append(cpf_limpo)
+                
+                # Busca CNPJ formatado na linha
+                match_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', linha)
+                if match_cnpj:
+                    cnpj_limpo = self._limpar_cnpj_cpf(match_cnpj.group(1))
+                    if len(cnpj_limpo) == CNPJ_TAMANHO and cnpj_limpo not in cnpjs_formatados:
+                        cnpjs_formatados.append(cnpj_limpo)
+                
+                # Busca CPF não formatado mas para antes de telefone
+                match_cpf_raw = re.search(r'(?:CNPJ/CPF|CPF)[:\s]*(\d{11})(?:\s|$|[^\d]|FONE|TELEFONE)', linha, re.IGNORECASE)
+                if match_cpf_raw:
+                    cpf_limpo = match_cpf_raw.group(1)
+                    if len(cpf_limpo) == 11:
+                        # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                        if cpf_limpo not in cnpjs_formatados:
+                            cnpjs_formatados.append(cpf_limpo)
+                
+                # Busca CNPJ não formatado mas para antes de telefone
+                match_cnpj_raw = re.search(r'(?:CNPJ/CPF|CNPJ)[:\s]*(\d{14})(?:\s|$|[^\d]|FONE|TELEFONE)', linha, re.IGNORECASE)
+                if match_cnpj_raw:
+                    cnpj_limpo = match_cnpj_raw.group(1)
+                    if len(cnpj_limpo) == CNPJ_TAMANHO and cnpj_limpo not in cnpjs_formatados:
+                        cnpjs_formatados.append(cnpj_limpo)
+                
+                if len(cnpjs_formatados) >= 3:
+                    break
+            
+            # Último fallback: busca sequências de dígitos no texto completo
+            if len(cnpjs_formatados) < 3:
+                texto_sem_pontuacao = re.sub(r'[^\d\s]', ' ', contexto)
+                # Busca CPF primeiro (11 dígitos)
+                cpfs_raw = re.findall(rf'(?:^|\s)(\d{{11}})(?:\s|$)', texto_sem_pontuacao)
+                for cpf in cpfs_raw:
+                    if cpf != "0" * 11:
+                        # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                        if cpf not in cnpjs_formatados:
+                            cnpjs_formatados.append(cpf)
+                
+                # Busca CNPJ (14 dígitos) mas verifica se não é CPF + telefone
+                cnpjs_raw = re.findall(rf'(?:^|\s)(\d{{{CNPJ_TAMANHO}}})(?:\s|$)', texto_sem_pontuacao)
+                for cnpj in cnpjs_raw:
+                    # Validação: não pode ser tudo zeros ou começar com 00
+                    # Verifica se não é CPF (11 dígitos) + telefone (3 dígitos)
+                    if (cnpj != CNPJ_VAZIO and 
+                        not cnpj.startswith('00') and
+                        not (len(cnpj) == 14 and cnpj[:11] != "0" * 11 and 
+                             cnpj[11:14].startswith(('14', '15', '16', '17', '18', '19')))):
+                        if cnpj not in cnpjs_formatados:
+                            cnpjs_formatados.append(cnpj)
+                
+                cnpjs_formatados = cnpjs_formatados[:3]  # Pega até 3 CNPJs/CPFs
         
         # Associa CNPJs aos campos (ordem: Emitente, Contratante, Destinatário)
         if len(cnpjs_formatados) >= 1:
@@ -225,11 +293,21 @@ class ExtratorPDF:
         return registro if registro.get('nf_numero') or registro.get('cte_numero') else None
     
     def _limpar_cnpj_cpf(self, texto: str) -> str:
-        """Remove pontuação de CNPJ/CPF e preenche com zeros se necessário."""
+        """
+        Remove pontuação de CNPJ/CPF.
+        Retorna o valor limpo sem preencher - o sanitizer tratará a formatação conforme necessário.
+        """
         if not texto:
             return CNPJ_VAZIO
         nums = ''.join(filter(str.isdigit, str(texto)))
-        # Preenche com zeros à esquerda se for menor que CNPJ_TAMANHO
+        # Retorna como está - o sanitizer tratará a formatação conforme necessário
+        # Se já tem 14 dígitos (CNPJ), retorna como está
+        if len(nums) == CNPJ_TAMANHO:
+            return nums
+        # Se tem 11 dígitos (CPF), retorna como está
+        if len(nums) == 11:
+            return nums
+        # Para outros tamanhos, preenche com zeros (casos especiais)
         return nums.zfill(CNPJ_TAMANHO)[:CNPJ_TAMANHO]
     
     def extrair_todos_dados(self, callback_progresso=None) -> List[Dict]:

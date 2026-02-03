@@ -37,7 +37,7 @@ from .constants import UIConstants
 from .validators import FormValidator, somente_digitos
 from .log_manager import LogManager
 from .progress_manager import ProgressManager
-from .utils import downloads_dir, gerar_nome_arquivo_saida, extrair_ano_padrao
+from .utils import downloads_dir, gerar_nome_arquivo_saida, extrair_ano_padrao, extrair_mes_padrao
 from src.gerador.layout_constants import CNPJ_TAMANHO  # Constante compartilhada
 
 # Configurações Globais de Tema
@@ -61,7 +61,8 @@ class App(ctk.CTk):
         self.cnpj_mapa = StringVar(value="")
         self.filial_selecionada = StringVar(value="")
         self.nome_filial = StringVar(value="")
-        self.mes_selecionado = StringVar(value=UIConstants.MES_PADRAO)
+        # Define mês e ano padrão baseado na data atual do sistema
+        self.mes_selecionado = StringVar(value=extrair_mes_padrao())
         self.ano_selecionado = StringVar(value=str(extrair_ano_padrao()))
         self.status = StringVar(value=UIConstants.TEXT_STATUS_DEFAULT)
         
@@ -694,6 +695,19 @@ class App(ctk.CTk):
                         mensagem = detalhes.get('mensagem', '')
                         if mensagem:
                             self.after(0, lambda: self._log_manager.adicionar_aviso(mensagem))
+                    elif etapa == 'processar_log':
+                        # Logs do processador (SiproquimProcessor)
+                        mensagem = detalhes.get('mensagem', '')
+                        tipo = detalhes.get('tipo', 'INFO')
+                        if mensagem:
+                            if tipo == 'ERRO':
+                                self.after(0, lambda: self._log_manager.adicionar_erro(mensagem))
+                            elif tipo == 'SUCESSO':
+                                self.after(0, lambda: self._log_manager.adicionar_sucesso(mensagem))
+                            elif tipo == 'ATENCAO' or tipo == 'ACAO' or tipo == 'ACAO_NECESSARIA':
+                                self.after(0, lambda: self._log_manager.adicionar_aviso(mensagem))
+                            else:  # INFO ou padrão
+                                self.after(0, lambda: self._log_manager.adicionar_info(mensagem))
                     elif etapa == 'finalizar':
                         self.after(0, lambda: self.progress_bar.set(UIConstants.PROGRESSO_COMPLETO))
                 except Exception as e:

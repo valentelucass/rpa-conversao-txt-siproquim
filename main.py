@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from src.extrator import ExtratorPDF
+from src.processador import SiproquimProcessor
 from src.gerador import GeradorTXT
 
 
@@ -97,6 +98,47 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     finally:
         extrator.fechar_pdf()
     
+    # CAMADA DE PROCESSAMENTO HÍBRIDA: Corrige automaticamente o que pode, mantém tudo no arquivo
+    # Estratégia: Auto-correção + Delegação (NENHUM registro é removido)
+    if callback_progresso:
+        callback_progresso('processar', {'total_registros': len(nfs_deduplicadas)})
+    
+    # Função wrapper para converter logs do processador em callback_progresso
+    def log_wrapper(mensagem: str):
+        """Converte logs do processador para callback_progresso (GUI) ou print (CLI)."""
+        if callback_progresso:
+            # Extrai o tipo do log da mensagem formatada [TIPO] mensagem
+            tipo = 'INFO'
+            msg_limpa = mensagem
+            if mensagem.startswith('[') and ']' in mensagem:
+                tipo = mensagem[1:mensagem.index(']')].strip()
+                msg_limpa = mensagem[mensagem.index(']') + 1:].strip()
+            
+            # Envia para o GUI usando a etapa 'processar_log'
+            callback_progresso('processar_log', {
+                'tipo': tipo,
+                'mensagem': msg_limpa
+            })
+        else:
+            # Fallback para CLI
+            print(mensagem)
+    
+    # Instancia a classe inteligente (usa wrapper que integra com GUI)
+    processador = SiproquimProcessor(callback_log=log_wrapper)
+    
+    # Processa, Corrige e Enriquece os dados (mantém TODOS os registros no arquivo)
+    # Avisos aparecem no log automaticamente para correção manual quando necessário
+    nfs_validas = processador.filtrar_dados_validos(nfs_deduplicadas)
+    
+    # Estatísticas para callback (se necessário)
+    stats = processador.obter_estatisticas()
+    if callback_progresso:
+        callback_progresso('processar', {
+            'total_rejeitados': stats['total_rejeitados'],  # Sempre 0 na estratégia híbrida
+            'total_corrigidos': stats['total_corrigidos'],
+            'total_aprovados': len(nfs_validas)
+        })
+    
     # Extrai mês e ano (usa valores fornecidos ou extrai do PDF)
     if mes is None or ano is None:
         mes, ano = extrair_mes_ano_do_pdf(caminho_pdf)
@@ -104,14 +146,14 @@ def processar_pdf(caminho_pdf: str, cnpj_rodogarcia: str,
     
     if callback_progresso:
         callback_progresso('gerar', {
-            'total_nfs': len(nfs_deduplicadas),
+            'total_nfs': len(nfs_validas),
             'mes': mes,
             'ano': ano
         })
     
-    # Gera arquivo TXT
+    # Gera arquivo TXT (agora só recebe dados que o SIPROQUIM aceita)
     gerador = GeradorTXT(cnpj_rodogarcia)
-    caminho_gerado = gerador.gerar_arquivo(nfs_deduplicadas, mes, ano, caminho_saida, callback_progresso=callback_progresso)
+    caminho_gerado = gerador.gerar_arquivo(nfs_validas, mes, ano, caminho_saida, callback_progresso=callback_progresso)
     
     print(f"Arquivo TXT gerado com sucesso: {caminho_gerado}")
     return caminho_gerado

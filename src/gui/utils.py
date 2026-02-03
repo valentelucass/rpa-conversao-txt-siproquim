@@ -2,6 +2,7 @@
 Utilitários para a interface gráfica.
 """
 
+from datetime import datetime
 from pathlib import Path
 
 
@@ -59,16 +60,22 @@ def gerar_nome_arquivo_saida(ano: int, mes_abreviado: str, cnpj: str, nome_pdf: 
 
 def extrair_ano_padrao() -> int:
     """
-    Extrai o ano padrão baseado na data atual.
-    
-    Se o mês atual for <= 6, retorna o ano anterior.
-    Caso contrário, retorna o ano atual.
+    Retorna o ano atual do sistema.
     
     Returns:
-        Ano padrão
+        Ano atual (ex: 2026)
     """
-    import time
-    now = time.localtime()
-    if now.tm_mon <= 6:
-        return now.tm_year - 1
-    return now.tm_year
+    return datetime.now().year
+
+
+def extrair_mes_padrao() -> str:
+    """
+    Retorna o mês atual do sistema no formato abreviado (JAN, FEV, etc.).
+    
+    Returns:
+        Mês abreviado (ex: "JAN", "DEZ")
+    """
+    from src.gerador.layout_constants import MESES_ALFANUMERICOS
+    
+    mes_atual = datetime.now().month
+    return MESES_ALFANUMERICOS.get(mes_atual, "DEZ")

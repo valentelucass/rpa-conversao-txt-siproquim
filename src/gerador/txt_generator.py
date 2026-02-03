@@ -92,88 +92,162 @@ class GeradorTXT:
         Raises:
             ValueError: Se algum CNPJ for inválido segundo algoritmo oficial
         """
-        # Preparação e sanitização dos dados usando constantes
-        cnpj_contratante = sanitizar_numerico(dados_nf.get('contratante_cnpj'), TN_TAM_CNPJ)
-        nome_contratante = sanitizar_texto(dados_nf.get('contratante_nome'), TN_TAM_NOME)
-        nf_numero = sanitizar_alfanumerico(dados_nf.get('nf_numero'), TN_TAM_NF_NUMERO)
-        nf_data = sanitizar_texto(dados_nf.get('nf_data'), TN_TAM_NF_DATA)
-        cnpj_origem = sanitizar_numerico(dados_nf.get('emitente_cnpj'), TN_TAM_CNPJ)
-        nome_origem = sanitizar_texto(dados_nf.get('emitente_nome'), TN_TAM_NOME)
-        cnpj_destino = sanitizar_numerico(dados_nf.get('destinatario_cnpj'), TN_TAM_CNPJ)
-        nome_destino = sanitizar_texto(dados_nf.get('destinatario_nome'), TN_TAM_NOME)
-        local_retirada = dados_nf.get('local_retirada', TN_LOCAL_PROPRIO)
-        local_entrega = dados_nf.get('local_entrega', TN_LOCAL_PROPRIO)
+        # CRÍTICO: Validação ANTES de formatar para evitar enviar "lixo" ao SIPROQUIM
+        # O validador do SIPROQUIM valida o número formatado (14 dígitos) como CNPJ
+        # Se formatarmos um CPF válido para 14 dígitos, ele não passará na validação de CNPJ
         
-        # Validação de CNPJs usando algoritmo oficial
-        # Isso ajuda a identificar CNPJs inválidos antes de gerar o arquivo
+        # Extrai apenas dígitos dos valores originais (ANTES de formatar)
+        cnpj_contratante_raw = dados_nf.get('contratante_cnpj', '')
+        cnpj_origem_raw = dados_nf.get('emitente_cnpj', '')
+        cnpj_destino_raw = dados_nf.get('destinatario_cnpj', '')
         
-        # Validação especial para CNPJ Contratante: pode ser pessoa física (CPF convertido)
-        if not validar_cnpj(cnpj_contratante):
-            # Verifica se é um CPF convertido (pessoa física)
-            if is_cpf_convertido(cnpj_contratante):
-                # Para pessoa física, aceita o CPF convertido sem validação rigorosa
-                # O SIPROQUIM aceita CPFs convertidos para contratantes pessoa física
-                pass  # Aceita o CPF convertido
-            else:
-                # Verifica se o nome parece ser de pessoa física usando função auxiliar
-                # que verifica palavras completas (evita falsos positivos como "ME" em "ALMEIDA")
-                if parece_pessoa_fisica_pelo_nome(nome_contratante):
+        cnpj_contratante_limpo = ''.join(filter(str.isdigit, str(cnpj_contratante_raw)))
+        cnpj_origem_limpo = ''.join(filter(str.isdigit, str(cnpj_origem_raw)))
+        cnpj_destino_limpo = ''.join(filter(str.isdigit, str(cnpj_destino_raw)))
+        
+        # Validação de CNPJs/CPFs usando algoritmo oficial
+        # CRÍTICO: Diferencia CPF de CNPJ baseado apenas no tamanho (11 vs 14 dígitos)
+        
+        # Validação para CNPJ Contratante: pode ser CPF (11 dígitos) ou CNPJ (14 dígitos)
+        # CORREÇÃO: Usa dados_nf.get() diretamente pois nome_contratante ainda não foi definido
+        nome_contratante_raw = dados_nf.get('contratante_nome', '')
+        if len(cnpj_contratante_limpo) == 11:
+            # É CPF - valida como CPF
+            if not validar_cpf(cnpj_contratante_limpo):
+                raise ValueError(
+                    f"CPF Contratante inválido: {cnpj_contratante_limpo}. "
+                    f"Nome: {nome_contratante_raw[:50]}. "
+                    f"Verifique se o CPF foi extraído corretamente do PDF."
+                )
+        elif len(cnpj_contratante_limpo) == 14:
+            # É CNPJ - valida como CNPJ
+            if not validar_cnpj(cnpj_contratante_limpo):
+                # Verifica se o nome parece ser de pessoa física
+                if parece_pessoa_fisica_pelo_nome(nome_contratante_raw):
                     # Aceita sem validação rigorosa para pessoa física
-                    # (pode ser um CPF mal formatado ou CNPJ genérico para pessoa física)
                     pass
                 else:
-                    # Se não é CPF convertido e não parece ser pessoa física, gera erro
                     raise ValueError(
-                        f"CNPJ Contratante inválido: {cnpj_contratante}. "
-                        f"Nome: {nome_contratante[:50]}. "
+                        f"CNPJ Contratante inválido: {cnpj_contratante_limpo}. "
+                        f"Nome: {nome_contratante_raw[:50]}. "
                         f"Verifique se o CNPJ foi extraído corretamente do PDF."
                     )
-        
-        # Validação para CNPJ Origem (Emitente) - mantém validação rigorosa
-        if not validar_cnpj(cnpj_origem):
+        else:
             raise ValueError(
-                f"CNPJ Origem (Emitente) inválido: {cnpj_origem}. "
-                f"Nome: {nome_origem[:50]}. "
-                f"Verifique se o CNPJ foi extraído corretamente do PDF."
+                f"Documento Contratante inválido (deve ter 11 ou 14 dígitos): {cnpj_contratante_limpo}. "
+                f"Nome: {nome_contratante_raw[:50]}."
             )
         
-        # Validação especial para CNPJ Destino: pode ser pessoa física (CPF convertido)
-        if not validar_cnpj(cnpj_destino):
-            # Verifica se é um CPF convertido (pessoa física)
-            if is_cpf_convertido(cnpj_destino):
-                # Para pessoa física, aceita o CPF convertido sem validação rigorosa
-                # O SIPROQUIM aceita CPFs convertidos para destinatários pessoa física
-                pass  # Aceita o CPF convertido
-            else:
-                # Verifica se o nome parece ser de pessoa física usando função auxiliar
-                # que verifica palavras completas (evita falsos positivos como "ME" em "ALMEIDA")
-                if parece_pessoa_fisica_pelo_nome(nome_destino):
+        # Validação para CNPJ Origem (Emitente) - deve ser CNPJ (14 dígitos)
+        # CORREÇÃO: Usa dados_nf.get() diretamente pois nome_origem ainda não foi definido
+        nome_origem_raw = dados_nf.get('emitente_nome', '')
+        if len(cnpj_origem_limpo) == 14:
+            if not validar_cnpj(cnpj_origem_limpo):
+                raise ValueError(
+                    f"CNPJ Origem (Emitente) inválido: {cnpj_origem_limpo}. "
+                    f"Nome: {nome_origem_raw[:50]}. "
+                    f"Verifique se o CNPJ foi extraído corretamente do PDF."
+                )
+        else:
+            raise ValueError(
+                f"CNPJ Origem (Emitente) deve ter 14 dígitos, recebido: {len(cnpj_origem_limpo)}. "
+                f"Valor: {cnpj_origem_limpo}. Nome: {nome_origem_raw[:50]}."
+            )
+        
+        # Validação para CNPJ Destino: pode ser CPF (11 dígitos) ou CNPJ (14 dígitos)
+        # CORREÇÃO: Usa dados_nf.get() diretamente pois nome_destino ainda não foi definido
+        nome_destino_raw = dados_nf.get('destinatario_nome', '')
+        if len(cnpj_destino_limpo) == 11:
+            # É CPF - valida como CPF
+            if not validar_cpf(cnpj_destino_limpo):
+                raise ValueError(
+                    f"CPF Destino (Destinatário) inválido: {cnpj_destino_limpo}. "
+                    f"Nome: {nome_destino_raw[:50]}. "
+                    f"Verifique se o CPF foi extraído corretamente do PDF."
+                )
+        elif len(cnpj_destino_limpo) == 14:
+            # É CNPJ - valida como CNPJ
+            if not validar_cnpj(cnpj_destino_limpo):
+                # Verifica se o nome parece ser de pessoa física
+                if parece_pessoa_fisica_pelo_nome(nome_destino_raw):
                     # Aceita sem validação rigorosa para pessoa física
-                    # (pode ser um CPF mal formatado ou CNPJ genérico para pessoa física)
                     pass
                 else:
-                    # Se não é CPF convertido e não parece ser pessoa física, gera erro
                     raise ValueError(
-                        f"CNPJ Destino (Destinatário) inválido: {cnpj_destino}. "
-                        f"Nome: {nome_destino[:50]}. "
+                        f"CNPJ Destino (Destinatário) inválido: {cnpj_destino_limpo}. "
+                        f"Nome: {nome_destino_raw[:50]}. "
                         f"Verifique se o CNPJ foi extraído corretamente do PDF."
                     )
+        else:
+            raise ValueError(
+                f"Documento Destino inválido (deve ter 11 ou 14 dígitos): {cnpj_destino_limpo}. "
+                f"Nome: {nome_destino_raw[:50]}."
+            )
+        
+        # VALIDAÇÃO CRÍTICA: Verifica se CPF formatado para 14 dígitos passará na validação do SIPROQUIM
+        # O SIPROQUIM valida o número formatado (14 dígitos) como CNPJ
+        # Se um CPF válido for formatado para 14 dígitos, ele NÃO passará na validação de CNPJ
+        # Isso causa o erro "O CPF/CNPJ ... é inválido" no SIPROQUIM
+        
+        def verificar_cpf_formatado_sera_rejeitado(cpf_limpo: str, nome: str, campo: str) -> None:
+            """
+            Verifica se um CPF válido, quando formatado para 14 dígitos, falha na validação de CNPJ.
+            
+            CORREÇÃO: Mudado de raise ValueError para warnings.warn para permitir geração do arquivo.
+            Um CPF formatado com zeros à esquerda NUNCA será um CNPJ válido matematicamente,
+            mas o arquivo deve ser gerado para tentativa de envio ou análise manual.
+            """
+            if len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                # Formata o CPF para 14 dígitos (zeros à esquerda)
+                cpf_formatado = cpf_limpo.zfill(14)
+                # Verifica se o número formatado passa na validação de CNPJ
+                # Sabemos que vai falhar na validação matemática de CNPJ
+                if not validar_cnpj(cpf_formatado):
+                    # ALTERADO: De raise ValueError para warnings.warn
+                    # Isso permite gerar o arquivo para tentativa de envio ou análise manual
+                    warnings.warn(
+                        f"ALERTA: CPF {campo} válido ({cpf_limpo}) não passa na validação matemática de CNPJ "
+                        f"quando formatado com zeros ({cpf_formatado}). "
+                        f"Nome: {nome[:50]}. "
+                        f"O SIPROQUIM pode rejeitar este registro. "
+                        f"O arquivo será gerado para tentativa de envio ou análise manual.",
+                        UserWarning
+                    )
+        
+        # Verifica cada campo que pode conter CPF
+        verificar_cpf_formatado_sera_rejeitado(cnpj_contratante_limpo, dados_nf.get('contratante_nome', ''), "Contratante")
+        verificar_cpf_formatado_sera_rejeitado(cnpj_destino_limpo, dados_nf.get('destinatario_nome', ''), "Destino")
         
         # NOVA VALIDAÇÃO: Avisa se contratante e destino são iguais
         # (pode causar erro no SIPROQUIM se não estiver configurado corretamente)
-        cnpj_contratante_limpo = ''.join(filter(str.isdigit, cnpj_contratante))
-        cnpj_destino_limpo = ''.join(filter(str.isdigit, cnpj_destino))
+        # Usa os valores já limpos da validação anterior
         if (cnpj_contratante_limpo == cnpj_destino_limpo and 
-            cnpj_contratante_limpo != "0" * CNPJ_TAMANHO and
-            len(cnpj_contratante_limpo) == CNPJ_TAMANHO):
+            cnpj_contratante_limpo != "0" * 14 and
+            cnpj_contratante_limpo != "0" * 11 and
+            len(cnpj_contratante_limpo) in [11, 14]):
             # Avisa mas não bloqueia - pode ser válido em alguns casos
-            nf_num_display = str(nf_numero).strip() if nf_numero else "N/A"
+            nf_num_display = str(dados_nf.get('nf_numero', '')).strip() if dados_nf.get('nf_numero') else "N/A"
+            tipo_doc = "CPF" if len(cnpj_contratante_limpo) == 11 else "CNPJ"
             warnings.warn(
-                f"ATENÇÃO: CNPJ Contratante ({cnpj_contratante_limpo}) igual ao CNPJ Destino. "
+                f"ATENÇÃO: {tipo_doc} Contratante ({cnpj_contratante_limpo}) igual ao {tipo_doc} Destino. "
                 f"Isso pode causar erro no SIPROQUIM se não estiver configurado corretamente. "
                 f"NF: {nf_num_display}",
                 UserWarning
             )
+        
+        # AGORA sim, formata os valores após validação
+        nome_contratante = sanitizar_texto(dados_nf.get('contratante_nome'), TN_TAM_NOME)
+        nf_numero = sanitizar_alfanumerico(dados_nf.get('nf_numero'), TN_TAM_NF_NUMERO)
+        nf_data = sanitizar_texto(dados_nf.get('nf_data'), TN_TAM_NF_DATA)
+        nome_origem = sanitizar_texto(dados_nf.get('emitente_nome'), TN_TAM_NOME)
+        nome_destino = sanitizar_texto(dados_nf.get('destinatario_nome'), TN_TAM_NOME)
+        local_retirada = dados_nf.get('local_retirada', TN_LOCAL_PROPRIO)
+        local_entrega = dados_nf.get('local_entrega', TN_LOCAL_PROPRIO)
+        
+        # Formata os CNPJs/CPFs para 14 dígitos (após validação)
+        cnpj_contratante = sanitizar_numerico(cnpj_contratante_raw, TN_TAM_CNPJ)
+        cnpj_origem = sanitizar_numerico(cnpj_origem_raw, TN_TAM_CNPJ)
+        cnpj_destino = sanitizar_numerico(cnpj_destino_raw, TN_TAM_CNPJ)
         
         # Montagem posicional rígida usando constantes
         linha = TN_TIPO

@@ -52,20 +52,74 @@ def sanitizar_texto(texto: Optional[str], tamanho: int) -> str:
     return texto_final[:tamanho].ljust(tamanho)
 
 
+def _identificar_tipo_documento(valor: str) -> str:
+    """
+    Identifica se um valor numérico é CPF ou CNPJ baseado apenas no tamanho.
+    
+    CRÍTICO: Não confunde CPF com CNPJ. Baseado apenas no tamanho:
+    - 11 dígitos = CPF
+    - 14 dígitos = CNPJ
+    - Outros = DESCONHECIDO
+    
+    Args:
+        valor: String numérica limpa (apenas dígitos)
+    
+    Returns:
+        'CPF', 'CNPJ' ou 'DESCONHECIDO'
+    """
+    if len(valor) == 11:
+        return 'CPF'
+    elif len(valor) == 14:
+        return 'CNPJ'
+    else:
+        return 'DESCONHECIDO'
+
+
 def sanitizar_numerico(valor: Optional[str], tamanho: int) -> str:
     """
-    Remove tudo que não for número e preenche com zeros à esquerda.
+    Remove tudo que não for número e ajusta ao tamanho especificado.
+    
+    CRÍTICO: Diferencia CPF de CNPJ baseado apenas no tamanho (11 vs 14 dígitos).
+    Conforme manual técnico SIPROQUIM:
+    - Campos numéricos: preencher com zeros à esquerda
+    - CPF (11 dígitos) em campo CNPJ (14 dígitos): preenche com zeros à esquerda (padrão numérico)
+    
+    IMPORTANTE: Esta função NÃO valida o documento. A validação deve ser feita ANTES
+    de chamar esta função, no módulo txt_generator.py.
+    
+    Esta função é genérica e funciona para qualquer documento.
     
     Args:
         valor: Valor numérico a ser sanitizado (pode ser None)
-        tamanho: Tamanho final do campo
+        tamanho: Tamanho final do campo (geralmente 14 para CNPJ)
     
     Returns:
-        String numérica com tamanho fixo preenchida com zeros à esquerda
+        String numérica com tamanho fixo, respeitando a diferença entre CPF e CNPJ
     """
     if not valor:
         return "0" * tamanho
+    
     nums = ''.join(filter(str.isdigit, str(valor)))
+    
+    # Identifica o tipo do documento (CPF ou CNPJ)
+    tipo_doc = _identificar_tipo_documento(nums)
+    
+    # Se já tem o tamanho exato, retorna como está
+    if len(nums) == tamanho:
+        return nums
+    
+    # CRÍTICO: Se é CPF (11 dígitos) e precisa caber em campo de CNPJ (14 dígitos)
+    # Preenche com zeros à esquerda (conforme manual técnico: campos numéricos preenchem à esquerda)
+    # NOTA: O resultado NÃO será um CNPJ válido, mas é o formato exigido pelo layout.
+    # A validação do CPF original deve ser feita ANTES desta formatação.
+    if tipo_doc == 'CPF' and tamanho == 14:
+        return nums.zfill(tamanho)
+    
+    # Se é CNPJ (14 dígitos) mas tamanho diferente, preenche à esquerda
+    if tipo_doc == 'CNPJ':
+        return nums.zfill(tamanho)
+    
+    # Outros casos: preenche com zeros à esquerda (padrão para campos numéricos)
     return nums.zfill(tamanho)
 
 

@@ -35,9 +35,9 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
     Extrai CNPJ/CPF de um texto usando múltiplas estratégias (robustez).
     
     Estratégias (em ordem de prioridade):
-    1. Busca padrão formatado: "CNPJ/CPF: XX.XXX.XXX/XXXX-XX"
-    2. Busca padrão formatado solto: "XX.XXX.XXX/XXXX-XX"
-    3. Busca sequência de CNPJ_TAMANHO dígitos (fallback para CNPJs mal formatados)
+    1. Busca padrão formatado: "CNPJ/CPF: XX.XXX.XXX/XXXX-XX" ou "CNPJ/CPF: XXX.XXX.XXX-XX" (CPF)
+    2. Busca padrão formatado solto: "XX.XXX.XXX/XXXX-XX" (CNPJ) ou "XXX.XXX.XXX-XX" (CPF)
+    3. Busca sequência de 11 dígitos (CPF) ou 14 dígitos (CNPJ) com validação para evitar pegar telefone
     
     Args:
         texto: Texto que pode conter CNPJ/CPF
@@ -48,45 +48,122 @@ def extrair_cnpj_do_texto(texto: str) -> Optional[str]:
     if not texto:
         return None
     
-    # Estratégia 1: Busca padrão "CNPJ/CPF: XX.XXX.XXX/XXXX-XX"
-    match = re.search(r'CNPJ/CPF:\s*([\d./-]+)', texto, re.IGNORECASE)
-    if match:
-        cnpj_limpo = limpar_cnpj_cpf(match.group(1))
+    # Estratégia 1: Busca padrão "CNPJ/CPF: XX.XXX.XXX/XXXX-XX" ou "CNPJ/CPF: XXX.XXX.XXX-XX"
+    # CRÍTICO: Para na primeira ocorrência e não continua para pegar telefone
+    # Busca CPF formatado primeiro (11 dígitos: XXX.XXX.XXX-XX)
+    match_cpf = re.search(r'CNPJ/CPF:\s*(\d{3}\.\d{3}\.\d{3}-\d{2})(?:\s|$|[^\d])', texto, re.IGNORECASE)
+    if match_cpf:
+        cpf_limpo = limpar_cnpj_cpf(match_cpf.group(1))
+        if len(cpf_limpo) == 11:  # CPF tem 11 dígitos
+            # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+            return cpf_limpo
+    
+    # Busca CNPJ formatado (14 dígitos: XX.XXX.XXX/XXXX-XX)
+    match_cnpj = re.search(r'CNPJ/CPF:\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})(?:\s|$|[^\d])', texto, re.IGNORECASE)
+    if match_cnpj:
+        cnpj_limpo = limpar_cnpj_cpf(match_cnpj.group(1))
         if len(cnpj_limpo) == CNPJ_TAMANHO:  # Valida tamanho
             return cnpj_limpo
     
-    # Estratégia 2: Busca padrão formatado solto "XX.XXX.XXX/XXXX-XX"
+    # Busca padrão mais genérico mas ainda limitado (para na primeira ocorrência válida)
+    match = re.search(r'CNPJ/CPF:\s*([\d./-]+?)(?:\s|$|[^\d./-])', texto, re.IGNORECASE)
+    if match:
+        cnpj_limpo = limpar_cnpj_cpf(match.group(1))
+        # Aceita CPF (11 dígitos) ou CNPJ (14 dígitos)
+        if len(cnpj_limpo) == 11:
+            # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+            return cnpj_limpo
+        elif len(cnpj_limpo) == CNPJ_TAMANHO:
+            return cnpj_limpo
+    
+    # Estratégia 2: Busca padrão formatado solto "XX.XXX.XXX/XXXX-XX" (CNPJ) ou "XXX.XXX.XXX-XX" (CPF)
     # Aceita variações: com/sem pontos, com/sem barra, com/sem hífen
     padroes_formatados = [
-        r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}',  # 92.660.406/0076-36
-        r'\d{2}\.\d{3}\.\d{3}/\d{4}',         # 92.660.406/0076
-        r'\d{2}\.\d{3}\.\d{3}\.\d{4}-\d{2}', # Formato alternativo
+        r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}',  # 92.660.406/0076-36 (CNPJ)
+        r'\d{2}\.\d{3}\.\d{3}/\d{4}',         # 92.660.406/0076 (CNPJ sem dígito verificador)
+        r'\d{3}\.\d{3}\.\d{3}-\d{2}',         # 413.030.828-96 (CPF)
+        r'\d{2}\.\d{3}\.\d{3}\.\d{4}-\d{2}', # Formato alternativo CNPJ
     ]
     
     for padrao in padroes_formatados:
         match = re.search(padrao, texto)
         if match:
             cnpj_limpo = limpar_cnpj_cpf(match.group(0))
+            if len(cnpj_limpo) == 11:
+                # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                return cnpj_limpo
+            elif len(cnpj_limpo) == CNPJ_TAMANHO:
+                return cnpj_limpo
+    
+    # Estratégia 3: Busca sequências de dígitos, mas com validação para evitar pegar CPF + telefone
+    # Primeiro tenta encontrar CPF (11 dígitos) formatado ou não
+    # Divide o texto por linhas para evitar pegar CPF de uma linha + telefone de outra
+    linhas = texto.split('\n')
+    for linha in linhas:
+        linha = linha.strip()
+        if not linha:
+            continue
+        
+        # Busca CPF formatado na linha (XXX.XXX.XXX-XX)
+        match_cpf_linha = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', linha)
+        if match_cpf_linha:
+            cpf_limpo = limpar_cnpj_cpf(match_cpf_linha.group(1))
+            if len(cpf_limpo) == 11:
+                # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                return cpf_limpo
+        
+        # Busca CNPJ formatado na linha (XX.XXX.XXX/XXXX-XX)
+        match_cnpj_linha = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', linha)
+        if match_cnpj_linha:
+            cnpj_limpo = limpar_cnpj_cpf(match_cnpj_linha.group(1))
+            if len(cnpj_limpo) == CNPJ_TAMANHO:
+                return cnpj_limpo
+        
+        # Busca CPF não formatado (11 dígitos) mas para antes de telefone
+        # Procura por padrão que pare antes de sequências longas de dígitos (telefone)
+        match_cpf_raw = re.search(r'(?:CNPJ/CPF|CPF)[:\s]*(\d{11})(?:\s|$|[^\d]|FONE|TELEFONE)', linha, re.IGNORECASE)
+        if match_cpf_raw:
+            cpf_limpo = match_cpf_raw.group(1)
+            if len(cpf_limpo) == 11:
+                # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+                return cpf_limpo
+        
+        # Busca CNPJ não formatado (14 dígitos) mas para antes de telefone
+        match_cnpj_raw = re.search(r'(?:CNPJ/CPF|CNPJ)[:\s]*(\d{14})(?:\s|$|[^\d]|FONE|TELEFONE)', linha, re.IGNORECASE)
+        if match_cnpj_raw:
+            cnpj_limpo = match_cnpj_raw.group(1)
             if len(cnpj_limpo) == CNPJ_TAMANHO:
                 return cnpj_limpo
     
-    # Estratégia 3: Busca sequência de CNPJ_TAMANHO dígitos consecutivos (fallback agressivo)
+    # Estratégia 4: Busca sequências de dígitos no texto completo, mas com cuidado
     # Remove pontuação primeiro para facilitar busca
-    texto_sem_pontuacao = re.sub(r'[^\d]', '', texto)
+    texto_sem_pontuacao = re.sub(r'[^\d\s]', ' ', texto)
     
-    # Busca sequências de CNPJ_TAMANHO dígitos
-    match = re.search(rf'\d{{{CNPJ_TAMANHO}}}', texto_sem_pontuacao)
-    if match:
-        cnpj_candidato = match.group(0)
-        # Validação básica: não pode ser tudo zeros ou começar com 00
-        if cnpj_candidato != CNPJ_VAZIO and not cnpj_candidato.startswith('00'):
+    # Busca CPF primeiro (11 dígitos) - mais comum que CNPJ
+    match_cpf = re.search(r'(?:^|\s)(\d{11})(?:\s|$)', texto_sem_pontuacao)
+    if match_cpf:
+        cpf_candidato = match_cpf.group(1)
+        # Validação: não pode ser tudo zeros
+        if cpf_candidato != "0" * 11:
+            # Retorna CPF como está - o sanitizer tratará a formatação conforme necessário
+            return cpf_candidato
+    
+    # Busca CNPJ (14 dígitos) - mas verifica se não é CPF + telefone
+    match_cnpj = re.search(r'(?:^|\s)(\d{14})(?:\s|$)', texto_sem_pontuacao)
+    if match_cnpj:
+        cnpj_candidato = match_cnpj.group(1)
+        # Validação: não pode ser tudo zeros ou começar com 00
+        # Verifica se não é CPF (11 dígitos) + telefone (3 dígitos)
+        # Se os primeiros 11 dígitos parecem um CPF válido e os últimos 3 são início de telefone, ignora
+        if (cnpj_candidato != CNPJ_VAZIO and 
+            not cnpj_candidato.startswith('00') and
+            not (len(cnpj_candidato) == 14 and cnpj_candidato[:11] != "0" * 11 and 
+                 cnpj_candidato[11:14].startswith(('14', '15', '16', '17', '18', '19')))):
             return cnpj_candidato
     
-    # Estratégia 4: Busca sequências de CNPJ_TAMANHO dígitos próximas a palavras-chave
+    # Estratégia 5: Busca sequências de CNPJ_TAMANHO dígitos próximas a palavras-chave
     # Para casos extremos onde o CNPJ está quebrado
-    # IMPORTANTE: Não converte CPFs (11 dígitos) para CNPJs adicionando zeros
-    # CPFs devem ser tratados separadamente, não preenchidos com zeros
-    contexto_cnpj = re.search(rf'(?:CNPJ|EMITENTE|DESTINAT[ÁA]RIO|CONTRANTE).*?(\d{{{CNPJ_TAMANHO}}})', 
+    contexto_cnpj = re.search(rf'(?:CNPJ|EMITENTE|DESTINAT[ÁA]RIO|CONTRANTE).*?(\d{{{CNPJ_TAMANHO}}})(?:\s|$|[^\d]|FONE|TELEFONE)', 
                               texto, re.IGNORECASE | re.DOTALL)
     if contexto_cnpj:
         cnpj_candidato = limpar_cnpj_cpf(contexto_cnpj.group(1))

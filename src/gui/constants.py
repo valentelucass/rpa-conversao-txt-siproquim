@@ -12,7 +12,7 @@ class UIConstants:
     # ============================================================================
     # CONFIGURAÇÕES DA JANELA
     # ============================================================================
-    WINDOW_TITLE = "SIPROQUIM Converter V1 by valentelucass"
+    WINDOW_TITLE = "SIPROQUIM Converter V2 by valentelucass"
     WINDOW_SIZE = "1250x750"
     WINDOW_RESIZABLE = False
     
