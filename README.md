@@ -4,7 +4,7 @@ description: Conversor de PDF para TXT no layout SIPROQUIM/Rodogarcia para a Pol
 technologies: Python 3.8+, pdfplumber, CustomTkinter, PyInstaller, Pillow
 demo: N/A (Desktop GUI + CLI)
 highlight: true
-image: public/foto1.png
+image: public/foto.png
 -->
 
 <p align="center">
