@@ -15,6 +15,8 @@ class UIConstants:
     WINDOW_TITLE = "SIPROQUIM Converter V3 by valentelucass"
     WINDOW_SIZE = "1250x750"
     WINDOW_RESIZABLE = False
+    WINDOW_MIN_WIDTH = 1250
+    WINDOW_MIN_HEIGHT = 750
     
     # ============================================================================
     # CORES
@@ -32,6 +34,8 @@ class UIConstants:
     COLOR_LOG_INFO = "#4DABF7"  # Azul
     COLOR_LOG_DEBUG = "#A78BFA"  # Roxo
     COLOR_LOG_WARNING = "#FFD43B"  # Amarelo
+    COLOR_LOG_NF = "#74C0FC"  # Azul claro para destaque de NF
+    COLOR_LOG_ACTION = "#FAB005"  # Amarelo forte para acoes
     
     # Cores de texto
     COLOR_TEXT_PRIMARY = ("gray10", "gray90")
@@ -47,6 +51,12 @@ class UIConstants:
     # ============================================================================
     # TAMANHOS E DIMENSÕES
     # ============================================================================
+    # Tamanhos de fonte dos logs
+    LOG_FONT_SIZE_MIN = 9
+    LOG_FONT_SIZE_DEFAULT = 11
+    LOG_FONT_SIZE_MAX = 18
+    LOG_FONT_SIZE_STEP = 1
+
     # Tamanhos de fonte
     FONT_SIZE_TITLE = 26
     FONT_SIZE_SUBTITLE = 13
@@ -109,6 +119,7 @@ class UIConstants:
     
     # Títulos de seções
     TEXT_LOGS_TITLE = "📋 Logs de Processamento"
+    TEXT_LOGS_LEGEND = "Cores: INFO | SUCESSO | AVISO | ERRO | DEBUG"
     TEXT_STATUS_DEFAULT = "Aguardando ação do usuário..."
     TEXT_STATUS_INICIANDO = "Iniciando processamento..."
     TEXT_STATUS_ABRINDO_PDF = "Abrindo arquivo PDF..."

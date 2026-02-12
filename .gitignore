@@ -78,3 +78,9 @@ verificar_*.py
 analisar_*.py
 comparar_*.py
 !test_validacao_robusta.py
+
+# Installer (Inno Setup)
+installer/output/
+
+# Midia local (nao versionar)
+assista-antes-de-usar.mp4

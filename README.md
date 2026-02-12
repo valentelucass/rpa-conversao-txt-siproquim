@@ -11,7 +11,7 @@ image: public/foto1.png
   <img src="public/foto.png" alt="Capa do projeto" width="1200">
 </p>
 
-# SIPROQUIM Converter V6
+# SIPROQUIM Converter V2
 
 Conversor de PDF para TXT no formato SIPROQUIM/Rodogarcia para a Polícia Federal. Extrai dados de Notas Fiscais e CTes de arquivos PDF e gera arquivos TXT formatados conforme o layout exigido pelo sistema SIPROQUIM.
 
