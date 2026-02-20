@@ -10,10 +10,16 @@
 AppId={{53B8A0CB-8E20-4F70-9B63-C1A24D2FC97C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+DisableDirPage=auto
+UsePreviousAppDir=yes
+UsePreviousTasks=yes
+CloseApplications=yes
+RestartApplications=no
 OutputDir=output
 OutputBaseFilename=Setup_Conversor_SIPROQUIM
 Compression=lzma

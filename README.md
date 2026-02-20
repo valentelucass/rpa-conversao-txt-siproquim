@@ -74,6 +74,20 @@ Execute o arquivo `gui.py`:
 python gui.py
 ```
 
+### Memoria de Aprendizado (AppData)
+
+O banco SQLite da memoria fica no perfil do usuario, fora da pasta do app:
+
+```text
+%LOCALAPPDATA%\Rodogarcia\SIPROQUIM Converter\memoria\memoria_aprendizado.sqlite3
+```
+
+Comportamento na inicializacao:
+- Se o arquivo nao existir, o sistema cria a pasta e um SQLite vazio.
+- Se o arquivo ja existir, o sistema reaproveita o mesmo arquivo sem sobrescrever.
+
+Na GUI, o botao **Abrir pasta memoria** abre diretamente essa pasta para facilitar a substituicao manual do SQLite populado.
+
 ### Linha de Comando
 
 ```bash

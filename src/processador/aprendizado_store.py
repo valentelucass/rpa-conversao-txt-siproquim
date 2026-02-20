@@ -3,7 +3,7 @@ Memoria de aprendizado persistente (SQLite) para correcoes confirmadas.
 
 Caracteristicas:
 - Arquivo unico e portavel (facil de copiar entre computadores).
-- Salvo dentro do proprio projeto para ficar junto aos arquivos da IDE.
+- Salvo no AppData do usuario (fora da pasta do aplicativo).
 - API simples para:
   - aprender com TXT corrigido
   - buscar nome por documento
@@ -13,6 +13,7 @@ Caracteristicas:
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sqlite3
 import threading
@@ -30,6 +31,8 @@ class AprendizadoStore:
 
     DB_FILENAME = "memoria_aprendizado.sqlite3"
     MEM_DIRNAME = "memoria"
+    APP_VENDOR_DIR = "Rodogarcia"
+    APP_PRODUCT_DIR = "SIPROQUIM Converter"
     STATUS_ATIVO = "ativo"
     STATUS_QUARENTENA = "quarentena"
     CONFLITO_MARGEM = 2  # Diferenca minima para desempate automatico
@@ -522,18 +525,21 @@ class AprendizadoStore:
 
     def _resolver_caminho_db(self) -> Path:
         """
-        Resolve caminho de memoria DENTRO do projeto.
+        Resolve caminho da memoria no perfil do usuario (AppData Local).
 
         Estrategia:
-        1) Pasta raiz do projeto (pai de `src/`) quando detectada
-        2) Diretorio de trabalho atual (fallback)
+        1) Usa %LOCALAPPDATA% quando disponivel
+        2) Fallback para ~/AppData/Local em ambientes sem variavel definida
         """
-        arquivo_atual = Path(__file__).resolve()
-        candidato_raiz = arquivo_atual.parents[2]  # .../<repo>/src/processador/aprendizado_store.py
-        if (candidato_raiz / "src").exists():
-            return candidato_raiz / self.MEM_DIRNAME / self.DB_FILENAME
-
-        return Path.cwd() / self.MEM_DIRNAME / self.DB_FILENAME
+        local_appdata = os.getenv("LOCALAPPDATA", "").strip()
+        base_dir = Path(local_appdata) if local_appdata else (Path.home() / "AppData" / "Local")
+        return (
+            base_dir
+            / self.APP_VENDOR_DIR
+            / self.APP_PRODUCT_DIR
+            / self.MEM_DIRNAME
+            / self.DB_FILENAME
+        )
 
     @staticmethod
     def _calcular_sha256_arquivo(caminho_txt: str) -> str:
